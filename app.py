@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-NELCPM1TOOLS — BULK CLONE EDITION
-✅ FIXED: allData missing → proper field mapping
-✅ FIXED: payload includes ALL required fields
-✅ FIXED: save_player properly handles allData
+BULK ACCOUNT CLONE — EXACT COPY FROM MAIN.TXT
+✅ WALANG BINAGO — KINOPYA LANG ANG GUMAGANA
 """
 import os
 import json
@@ -24,360 +22,242 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================
-# CONFIG
+# EXACT CONFIG FROM MAIN.TXT
 # ==============================================================
-FIREBASE_URL = "https://newtoolcpm1-default-rtdb.firebaseio.com"
-FIREBASE_SECRET = "xenPl7tYl28lkhZr9AOzUavzzIEP3nOh9h1WmWOj"
-FK = "AIzaSyBW1ZbMiUeDZHYUO2bY8Bfnf5rRgrQGPTM"
-
-LOAD_URL = "https://europe-west1-cp-multiplayer.cloudfunctions.net/GetPlayerRecords3"
-SAVE_URL = "https://europe-west1-cp-multiplayer.cloudfunctions.net/SavePlayerRecordsPartially8"
-SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FK}"
-LOGIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FK}"
+FIREBASE_API_KEY = "AIzaSyBW1ZbMiUeDZHYUO2bY8Bfnf5rRgrQGPTM"
+GET_RECORDS_URL = "https://europe-west1-cp-multiplayer.cloudfunctions.net/GetPlayerRecords3"
+SAVE_RECORDS_URL = "https://europe-west1-cp-multiplayer.cloudfunctions.net/SavePlayerRecordsPartially8"
+SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
+SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
 
 app = Flask(__name__)
 CORS(app)
 
 # ==============================================================
-# ENCRYPTION HELPERS
+# EXACT HELPERS FROM MAIN.TXT — WALANG BINAGO
 # ==============================================================
-def make_xor_key(uid: str) -> bytes:
-    chars = list(str(uid or ""))
-    if len(chars) >= 9:
-        chars[1], chars[8] = chars[8], chars[1]
-    if len(chars) >= 3:
-        chars.pop(2)
-    if len(chars) >= 5:
-        chars.append(chars[4])
-    return "".join(chars).encode("utf-8") or b"0"
+def GenerateXORKey(uid: str) -> bytes:
+    uid_list = list(uid)
+    if len(uid_list) >= 9:
+        uid_list[1], uid_list[8] = uid_list[8], uid_list[1]
+    if len(uid_list) >= 3:
+        uid_list.pop(2)
+    if len(uid_list) >= 5:
+        uid_list.append(uid_list[4])
+    return ''.join(uid_list).encode('utf-8')
 
-def xor_bytes(data: bytes, key: bytes) -> bytes:
-    return bytes(data[i] ^ key[i % len(key)] for i in range(len(data)))
+def XORBytes(data: bytes, key: bytes) -> bytes:
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
 
-def decompress(data: bytes):
+def DecompressBrotli(data: bytes) -> bytes:
     try:
         return brotli.decompress(data)
-    except:
-        try:
-            return zlib.decompress(data, zlib.MAX_WBITS | 16)
-        except:
-            return None
+    except Exception:
+        return b''
 
-def _md5(text: str) -> bytes:
-    return hashlib.md5(str(text).encode()).digest()
+def CompressBrotli(data: bytes) -> bytes:
+    return brotli.compress(data)
 
-def decrypt_aes(data: bytes, key: bytes):
+def MD5Hash(text: str) -> bytes:
+    return hashlib.md5(text.encode('utf-8')).digest()
+
+def DecryptAES(data: bytes, key: bytes) -> bytes:
     try:
-        return unpad(AES.new(key[:16], AES.MODE_CBC, b"\x00" * 16).decrypt(data), 16)
-    except:
-        return None
+        cipher = AES.new(key[:16], AES.MODE_CBC, iv=b'\x00' * 16)
+        return cipher.decrypt(data)
+    except Exception:
+        return b''
 
 # ==============================================================
-# PLAYER PARSER
+# EXACT DECODE FUNCTION FROM MAIN.TXT
 # ==============================================================
-class Reader:
-    def __init__(self, data: bytes):
-        self.buf, self.pos = data, 0
-    def read_byte(self):
-        v = self.buf[self.pos] if self.pos + 1 <= len(self.buf) else 0
-        self.pos += 1
-        return v
-    def read_int(self):
-        if self.pos + 4 > len(self.buf): return 0
-        v = struct.unpack_from("<i", self.buf, self.pos)[0]
-        self.pos += 4
-        return v
-    def read_float(self):
-        if self.pos + 4 > len(self.buf): return 0.0
-        v = struct.unpack_from("<f", self.buf, self.pos)[0]
-        self.pos += 4
-        return v
-    def read_string(self):
-        marker = self.read_int()
-        if marker in (0, -1): return ""
-        length = (-marker) - 1 if marker < -1 else marker
-        if marker < -1: self.read_int()
-        length = max(0, min(length, 1000000))
-        if self.pos + length > len(self.buf): return ""
-        text = self.buf[self.pos:self.pos+length].decode("utf-8", errors="replace")
-        self.pos += length
-        return text.replace("\x00", "").strip()
-    def read_list(self, item_fn):
-        count = self.read_int()
-        if count <= 0 or count > 1000000: return []
-        res = []
-        for _ in range(count):
-            if self.pos >= len(self.buf): break
-            val = item_fn()
-            if val is not None: res.append(val)
-        return res
-
-def parse_player(buf: bytes):
-    r = Reader(buf)
-    if r.read_byte() == 0: return None
-    return {
-        "Name": r.read_string(),
-        "money": r.read_int(),
-        "coin": r.read_int(),
-        "localID": r.read_string(),
-        "boughtFsos": r.read_list(r.read_int),
-        "FriendsID": r.read_list(lambda: r.read_string()),
-        "LevelsDoneTime": r.read_list(r.read_float),
-        "floats": r.read_list(r.read_float),
-        "integers": r.read_list(r.read_int),
-        "fcar": r.read_list(r.read_int),
-        "favouriteWheels": r.read_list(r.read_int),
-        "favouriteVinyls": r.read_list(r.read_string()),
-        "favouriteEmojis": r.read_list(r.read_int),
-        "allData": r.read_string(),
-        "flags": {},
-        "animations": r.read_list(r.read_int),
-        "emojiPacks": r.read_list(r.read_int),
-        "wheels": r.read_list(r.read_int),
-        "boughtPoliceLights": r.read_list(r.read_int),
-        "boughtPoliceSirens": r.read_list(r.read_int),
-        "boughtCars": r.read_list(r.read_int),
-        "clothes": r.read_list(r.read_int),
-        "interiors": r.read_list(r.read_int),
-        "plates": r.read_list(r.read_string),
-    }
-
-def try_parse(buf: bytes):
-    candidates = [buf, decompress(buf)]
-    if candidates[1]: candidates.append(decompress(candidates[1]))
-    for c in filter(None, candidates):
-        if c[0] in (17, 23, 24):
-            p = parse_player(c)
-            if p and p.get("Name"): return p
+def DecodePlayerRecord(encoded_data: str, uid: str, password: str, email: str):
+    decoded = base64.b64decode(encoded_data)
+    
+    xor_key = GenerateXORKey(uid)
+    xor_decoded = XORBytes(decoded, xor_key)
+    decompressed = DecompressBrotli(xor_decoded)
+    
+    if decompressed:
         try:
-            clean = c[3:] if len(c)>=3 and c[:2]==b"\xef\xbb" else c
-            if clean and clean[0]==123: return json.loads(clean.decode())
-        except: pass
+            return json.loads(decompressed.decode('utf-8'))
+        except Exception:
+            pass
+    
+    for key_source in ["olzhas_carparking", password, uid, email]:
+        aes_key = MD5Hash(key_source)
+        decrypted = DecryptAES(decoded, aes_key)
+        decompressed_aes = DecompressBrotli(decrypted)
+        if decompressed_aes:
+            try:
+                return json.loads(decompressed_aes.decode('utf-8'))
+            except Exception:
+                continue
+    
     return None
 
-def decrypt_record(b64_text: str, uid: str, password: str, email: str):
-    try: buf = base64.b64decode(b64_text)
-    except: return {"success":False,"message":"Bad base64"}
-    direct = try_parse(buf)
-    if direct: return {"success":True,"record":direct}
-    if uid:
-        dec = decompress(xor_bytes(buf, make_xor_key(uid)))
-        if dec:
-            p = try_parse(dec)
-            if p: return {"success":True,"record":p}
-    for key in [_md5("olzhas_carparking"), _md5(password), _md5(uid), _md5(email)]:
-        plain = decrypt_aes(buf, key)
-        if plain:
-            p = try_parse(plain)
-            if p: return {"success":True,"record":p}
-    return {"success":False,"message":"Decrypt failed"}
+# ==============================================================
+# EXACT ENCODE FUNCTION FROM MAIN.TXT
+# ==============================================================
+def EncodePlayerRecord(player_data: dict, uid: str) -> str:
+    json_str = json.dumps(player_data, separators=(',', ':'))
+    compressed = CompressBrotli(json_str.encode('utf-8'))
+    xor_key = GenerateXORKey(uid)
+    xored = XORBytes(compressed, xor_key)
+    return base64.b64encode(xored).decode('utf-8')
 
 # ==============================================================
-# WRITER & SERIALIZER — ✅ FIXED
+# EXACT AUTH FUNCTIONS FROM MAIN.TXT
 # ==============================================================
-class Writer:
-    def __init__(self): self._p = []
-    def write_byte(self, v): self._p.append(bytes([int(v or 0) & 0xFF]))
-    def write_int(self, v): self._p.append(struct.pack("<i", int(v or 0)))
-    def write_float(self, v): self._p.append(struct.pack("<f", float(v or 0.0)))
-    def write_string(self, s):
-        if s is None: self.write_int(-1)
-        elif s == "": self.write_int(0)
-        else:
-            enc = s.encode("utf-8")
-            self.write_int(-(len(enc)) - 1)
-            self.write_int(len(s))
-            self._p.append(enc)
-    def write_list(self, lst, fn):
-        if lst is None: self.write_int(-1)
-        else:
-            self.write_int(len(lst))
-            for item in lst: fn(item)
-    def to_bytes(self): return b"".join(self._p)
-
-# ✅ ALL FIELDS COMPLETE — WALANG KULANG
-FIELD_MAPPING = [
-    (1, "localID"),
-    (2, "money"),
-    (3, "Name"),
-    (4, "coin"),
-    (5, "allData"),
-    (6, "boughtFsos"),
-    (7, "boughtPoliceLights"),
-    (8, "boughtPoliceSirens"),
-    (9, "FriendsID"),
-    (10, "LevelsDoneTime"),
-    (11, "floats"),
-    (12, "integers"),
-    (13, "fcar"),
-    (14, "favouriteWheels"),
-    (15, "favouriteVinyls"),
-    (16, "favouriteEmojis"),
-    (18, "emojiPacks"),
-    (44, "animations"),
-    (48, "wheels"),
-    (50, "boughtCars"),
-    (51, "clothes"),
-    (52, "interiors")
-]
-
-INT_LIST = {6,7,8,12,13,14,16,18,44,48,50,51,52}
-FLOAT_LIST = {10,11}
-
-def serialize_field(fid: int, value):
-    w = Writer()
-    if fid in (1,3,5):
-        w.write_string(value or "")
-    elif fid in (2,4):
-        w.write_int(value or 0)
-    elif fid in INT_LIST:
-        w.write_list(value or [], w.write_int)
-    elif fid in FLOAT_LIST:
-        w.write_list(value or [], w.write_float)
-    else:
-        return None
-    return w.to_bytes()
-
-def build_payload(record: dict, uid: str, fields: set):
-    parts = [struct.pack("<i", len(fields))]
-    for fid, key in FIELD_MAPPING:
-        if key not in fields: continue
-        raw = serialize_field(fid, record.get(key))
-        if raw: parts.extend([struct.pack("<hi", fid, len(raw)), raw])
-    combined = b"".join(parts)
-    return base64.b64encode(xor_bytes(brotli.compress(combined), make_xor_key(uid))).decode("ascii")
-
-# ==============================================================
-# AUTH HELPERS
-# ==============================================================
-def login_firebase(email: str, password: str):
-    r = requests.post(LOGIN_URL, json={
-        "email": email, "password": password, "returnSecureToken": True
-    }, timeout=15)
-    d = r.json()
-    if "idToken" in d:
-        return {"token": d["idToken"], "uid": d["localId"]}
-    raise Exception(d.get("error", {}).get("message", "Login Failed"))
-
-def create_random_account():
-    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
-    email = f"cpmclone_{suffix}@gmail.com"
-    password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=14))
-    
-    r = requests.post(SIGNUP_URL, json={
+def SignupNewAccount(email: str, password: str) -> dict:
+    payload = {
         "email": email,
         "password": password,
         "returnSecureToken": True
-    }, timeout=15)
-    d = r.json()
-    if "idToken" not in d:
-        raise Exception(d.get("error", {}).get("message", "Signup Failed"))
-    
+    }
+    response = requests.post(SIGNUP_URL, json=payload, timeout=30)
+    result = response.json()
+    if "idToken" not in result:
+        raise Exception(result.get("error", {}).get("message", "Signup failed"))
     return {
         "email": email,
         "password": password,
-        "uid": d["localId"],
-        "token": d["idToken"]
+        "localId": result["localId"],
+        "idToken": result["idToken"]
     }
 
-def load_player(uid: str, token: str, password: str, email: str):
-    r = requests.post(LOAD_URL, json={"data": None}, headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }, timeout=15)
-    if not r.ok: raise Exception(f"Load failed: {r.status_code}")
-    result = r.json()
-    dec = decrypt_record(result["result"], uid, password, email)
-    if not dec.get("success"): raise Exception(dec.get("message", "Decrypt Failed"))
-    return dec["record"]
-
-def save_player(uid: str, token: str, record: dict, fields: set):
-    payload = build_payload(record, uid, fields)
-    r = requests.post(SAVE_URL, json={
-        "data": {"data": payload, "deviceId": uid[:8]}
-    }, headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }, timeout=15)
-    if not r.ok:
-        raise Exception(f"Save failed: {r.status_code} — {r.text}")
-    return True
+def SigninAccount(email: str, password: str) -> dict:
+    payload = {
+        "email": email,
+        "password": password,
+        "returnSecureToken": True
+    }
+    response = requests.post(SIGNIN_URL, json=payload, timeout=30)
+    result = response.json()
+    if "idToken" not in result:
+        raise Exception(result.get("error", {}).get("message", "Signin failed"))
+    return {
+        "localId": result["localId"],
+        "idToken": result["idToken"]
+    }
 
 # ==============================================================
-# BULK CLONE — ✅ WITH DEBUG LOGS
+# EXACT SAVE FUNCTION FROM MAIN.TXT
 # ==============================================================
-@app.route('/bulk-clone', methods=['POST'])
-def bulk_clone():
-    try:
-        d = request.json
-        source_email = d.get("source_email")
-        source_pass = d.get("source_pass")
-        count = int(d.get("count", 1))
-        
-        if not source_email or not source_pass:
-            return jsonify({"ok": False, "message": "Missing source credentials"})
-        if count < 1 or count > 10:
-            return jsonify({"ok": False, "message": "Count must be between 1 and 10 only"})
-        
-        # Step 1: Load Source Account
-        src_auth = login_firebase(source_email, source_pass)
-        src_data = load_player(src_auth["uid"], src_auth["token"], source_pass, source_email)
-        
-        if not src_data:
-            return jsonify({"ok": False, "message": "Failed to load source account"})
-        
-        # ✅ ALL FIELDS — WALANG KULANG
-        copy_fields = {
-            "Name", "money", "coin", "localID", "boughtFsos", "FriendsID",
-            "LevelsDoneTime", "floats", "integers", "fcar", "favouriteWheels",
-            "favouriteVinyls", "favouriteEmojis", "allData", "animations",
-            "emojiPacks", "wheels", "boughtPoliceLights", "boughtPoliceSirens",
-            "boughtCars", "clothes", "interiors", "plates"
+def SavePlayerRecord(uid: str, token: str, player_data: dict) -> bool:
+    encoded = EncodePlayerRecord(player_data, uid)
+    payload = {
+        "data": {
+            "data": encoded,
+            "deviceId": uid[:8]
         }
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(SAVE_RECORDS_URL, json=payload, headers=headers, timeout=30)
+    return response.ok
+
+# ==============================================================
+# EXACT BULK CLONE FUNCTION FROM MAIN.TXT
+# ==============================================================
+def CloneAccount(source_email: str, source_password: str, count: int = 1) -> dict:
+    try:
+        print(f"[*] Signing into source account: {source_email}")
+        source_auth = SigninAccount(source_email, source_password)
         
-        created_accounts = []
+        print("[*] Fetching source player record...")
+        headers = {
+            "Authorization": f"Bearer {source_auth['idToken']}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(GET_RECORDS_URL, json={"data": None}, headers=headers, timeout=30)
+        result = response.json()
+        
+        if "result" not in result:
+            return {"success": False, "error": "No record found for source account"}
+        
+        print("[*] Decoding source record...")
+        source_record = DecodePlayerRecord(
+            result["result"],
+            source_auth["localId"],
+            source_password,
+            source_email
+        )
+        
+        if not source_record:
+            return {"success": False, "error": "Failed to decode source record"}
+        
+        print(f"[+] Source record loaded — Money: {source_record.get('money', 0)}, Cars: {len(source_record.get('fcar', []))}")
+        
+        created = []
         failed = []
         
         for i in range(count):
             try:
-                new_acc = create_random_account()
-                save_player(new_acc["uid"], new_acc["token"], src_data, copy_fields)
-                created_accounts.append({
+                new_email = f"cpmclone_{''.join(random.choices(string.ascii_lowercase + string.digits, k=12))}@gmail.com"
+                new_password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+                
+                print(f"[*] Creating account {i+1}/{count}: {new_email}")
+                new_account = SignupNewAccount(new_email, new_password)
+                
+                print(f"[*] Saving record to new account...")
+                SavePlayerRecord(
+                    new_account["localId"],
+                    new_account["idToken"],
+                    source_record
+                )
+                
+                created.append({
                     "index": i + 1,
-                    "email": new_acc["email"],
-                    "password": new_acc["password"],
-                    "uid": new_acc["uid"],
-                    "cars_copied": len(src_data.get("fcar", [])),
-                    "money": src_data.get("money", 0),
-                    "coins": src_data.get("coin", 0)
+                    "email": new_email,
+                    "password": new_password,
+                    "money": source_record.get("money", 0),
+                    "coins": source_record.get("coin", 0),
+                    "cars": len(source_record.get("fcar", []))
                 })
+                print(f"[+] Account {i+1} complete!")
+                
             except Exception as e:
                 failed.append({"index": i + 1, "error": str(e)})
+                print(f"[-] Account {i+1} failed: {str(e)}")
         
-        return jsonify({
-            "ok": True,
-            "source_email": source_email,
-            "source_name": src_data.get("Name", ""),
-            "cars_copied": len(src_data.get("fcar", [])),
-            "source_money": src_data.get("money", 0),
-            "source_coins": src_data.get("coin", 0),
-            "created_count": len(created_accounts),
-            "failed_count": len(failed),
-            "accounts": created_accounts,
-            "errors": failed
-        })
+        return {
+            "success": True,
+            "source_name": source_record.get("Name", "Unknown"),
+            "source_money": source_record.get("money", 0),
+            "source_coins": source_record.get("coin", 0),
+            "cars_copied": len(source_record.get("fcar", [])),
+            "created": created,
+            "failed": failed
+        }
+        
     except Exception as e:
-        return jsonify({"ok": False, "message": str(e)})
+        return {"success": False, "error": str(e)}
+
+# ==============================================================
+# FLASK ROUTES
+# ==============================================================
+@app.route('/bulk-clone', methods=['POST'])
+def api_bulk_clone():
+    data = request.json
+    result = CloneAccount(
+        data.get("source_email"),
+        data.get("source_password"),
+        min(max(int(data.get("count", 1)), 1), 10)
+    )
+    return jsonify(result)
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"ok": True, "message": "Bulk Clone API Online"})
+    return jsonify({"status": "ok", "message": "Bulk Clone API — From Main.TXT"})
 
 @app.route('/', methods=['GET'])
 def home():
-    return "<h1>✅ Bulk Clone API — FIXED VERSION</h1><p>allData included — should copy everything now!</p>"
+    return "<h1>✅ Bulk Clone API — EXACT FROM MAIN.TXT</h1>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
-                                 
+                                               
