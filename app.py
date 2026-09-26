@@ -555,6 +555,10 @@ def change_name():
         email = data.get('email')
         password = data.get('password')
         new_name = data.get('new_name')
+        # TEMPORARY: Bypass token check for testing
+# if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
+#     return jsonify({"ok": False, "message": "Insufficient tokens"})
+        
         if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
             return jsonify({"ok": False, "message": "Insufficient tokens"})
         client = CPMClient(email, password)
@@ -572,6 +576,10 @@ def change_plate():
         email = data.get('email')
         password = data.get('password')
         new_plate = data.get('new_plate')
+        # TEMPORARY: Bypass token check for testing
+# if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
+#     return jsonify({"ok": False, "message": "Insufficient tokens"})
+        
         if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
             return jsonify({"ok": False, "message": "Insufficient tokens"})
         client = CPMClient(email, password)
@@ -589,6 +597,10 @@ def unlock():
         email = data.get('email')
         password = data.get('password')
         feature = data.get('feature')
+        # TEMPORARY: Bypass token check for testing
+# if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
+#     return jsonify({"ok": False, "message": "Insufficient tokens"})
+        
         if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
             return jsonify({"ok": False, "message": "Insufficient tokens"})
         client = CPMClient(email, password)
@@ -664,6 +676,10 @@ def set_money():
         email = data.get('email')
         password = data.get('password')
         amount = min(int(data.get('amount', MAX_MONEY)), MAX_MONEY)
+        # TEMPORARY: Bypass token check for testing
+# if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
+#     return jsonify({"ok": False, "message": "Insufficient tokens"})
+        
         if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
             return jsonify({"ok": False, "message": "Insufficient tokens"})
         client = CPMClient(email, password)
@@ -681,6 +697,10 @@ def set_coins():
         email = data.get('email')
         password = data.get('password')
         amount = min(int(data.get('amount', MAX_COIN)), MAX_COIN)
+        # TEMPORARY: Bypass token check for testing
+# if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
+#     return jsonify({"ok": False, "message": "Insufficient tokens"})
+        
         if not deduct_tokens(email, TOKEN_COSTS["unlock"]):
             return jsonify({"ok": False, "message": "Insufficient tokens"})
         client = CPMClient(email, password)
