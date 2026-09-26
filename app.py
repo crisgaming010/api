@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 NELCPM1TOOLS — BULK CLONE ONLY
-✅ 1 to 10 accounts ONLY — EXACTLY FROM MAIN.TXT
-✅ WALANG TOKENS — LIBRE LAHAT
+✅ FIXED: str.join() error — k=14 inside choices()
+✅ 1 to 10 accounts ONLY
+✅ WALANG IBANG PINAGBAGO
 """
 import os
 import json
@@ -224,7 +225,7 @@ def build_payload(record: dict, uid: str, fields: set):
     return base64.b64encode(xor_bytes(brotli.compress(combined), make_xor_key(uid))).decode("ascii")
 
 # ==============================================================
-# AUTH HELPERS — WALANG PINAGBAGO
+# AUTH HELPERS — ✅ FIXED JOIN ERROR
 # ==============================================================
 def login_firebase(email: str, password: str):
     r = requests.post(LOGIN_URL, json={
@@ -238,10 +239,12 @@ def login_firebase(email: str, password: str):
 def create_random_account():
     suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
     email = f"cpmclone_{suffix}@gmail.com"
-    password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*"), k=14)
+    password = ''.join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=14))
     
     r = requests.post(SIGNUP_URL, json={
-        "email": email, "password": password, "returnSecureToken": True
+        "email": email,
+        "password": password,
+        "returnSecureToken": True
     }, timeout=15)
     d = r.json()
     if "idToken" not in d:
@@ -276,7 +279,7 @@ def save_player(uid: str, token: str, record: dict, fields: set):
     return r.ok
 
 # ==============================================================
-# BULK CLONE — 1 TO 10 LANG!!!
+# BULK CLONE — 1 TO 10 LANG
 # ==============================================================
 @app.route('/bulk-clone', methods=['POST'])
 def bulk_clone():
@@ -347,3 +350,4 @@ def home():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+    
